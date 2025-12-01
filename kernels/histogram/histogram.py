@@ -1,5 +1,7 @@
 import torch
 from torch.utils.cpp_extension import load
+import time
+
 
 torch.set_grad_enabled(False)
 
@@ -20,14 +22,38 @@ lib = load(
     extra_cflags=["-std=c++17"],
 )
 
-a = torch.tensor(list(range(10)) * 1000, dtype=torch.int32).cuda()
-h_i32 = lib.histogram_i32(a)
-print("-" * 80)
-for i in range(h_i32.shape[0]):
-    print(f"h_i32   {i}: {h_i32[i]}")
+# small helper to run warmup + timed iterations
+def run_benchmark(perf_func, a: torch.Tensor, tag: str, warmup: int = 10, iters: int = 100):
+    # warmup
+    for _ in range(warmup):
+        _ = perf_func(a)
+    torch.cuda.synchronize()
 
-print("-" * 80)
-h_i32x4 = lib.histogram_i32x4(a)
-for i in range(h_i32x4.shape[0]):
-    print(f"h_i32x4 {i}: {h_i32x4[i]}")
-print("-" * 80)
+    start = time.time()
+    for _ in range(iters):
+        out = perf_func(a)
+    torch.cuda.synchronize()
+    end = time.time()
+
+    total_ms = (end - start) * 1000.0
+    mean_ms = total_ms / iters
+    # show a small sanity-check of output values
+    out_cpu = out.detach().cpu()
+    vals = out_cpu.flatten().tolist()[:8]
+    print(f"{tag:>12}: mean_time={mean_ms:.6f} ms (over {iters} iters), sample={vals}")
+    return out, mean_ms
+
+
+if __name__ == "__main__":
+    a = torch.tensor(list(range(10)) * 1000, dtype=torch.int32).cuda()
+
+    print("-" * 80)
+    out1, t1 = run_benchmark(lib.histogram_i32, a, "hist_i32", warmup=10, iters=100)
+
+    print("-" * 80)
+    out2, t2 = run_benchmark(lib.histogram_i32x4, a, "hist_i32x4", warmup=10, iters=100)
+
+    # optional verification
+    eq = torch.equal(out1, out2)
+    print(f"-" * 80)
+    print(f"Outputs equal: {eq}")

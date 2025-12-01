@@ -79,6 +79,7 @@ for S, K in SKs:
     c = torch.zeros_like(a).cuda().float().contiguous()
     run_benchmark(lib.elementwise_add_f32, a, b, "f32", c)
     run_benchmark(lib.elementwise_add_f32x4, a, b, "f32x4", c)
+    # f = partial(torch.add, out=y)  # 绑定 out=y
     run_benchmark(partial(torch.add, out=c), a, b, "f32_th")
 
     print("-" * 85)

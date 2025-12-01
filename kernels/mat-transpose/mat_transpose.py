@@ -77,8 +77,17 @@ def run_benchmark(
     return out, mean_time
 
 
+# 使用 torch.compile 对该小函数进行图/编译优化：
+# - mode="max-autotune-no-cudagraphs" 旨在让编译器应用最大程度的自动调优
+#  （包括内核选择/布局优化等），但禁用 cudagraphs 的自动捕获/使用。
+# - 该装饰器在第一次调用时触发编译，将返回一个经过优化的可调用对象，
+#   适合在基准中与自定义 CUDA 内核进行性能比较。
 @torch.compile(mode="max-autotune-no-cudagraphs")
 def transpose_copy_compiled(input: torch.Tensor, out: torch.Tensor):
+    # 调用 torch.transpose_copy 将输入按 dim0<->dim1 转置并把结果写入到
+    # 指定的 `out` Tensor 中（就地/指定输出缓冲，避免每次分配新 Tensor）。
+    # 这里的函数只是一个薄封装，目的是让 torch.compile 对 transpose 操作
+    # 进行编译优化以便比较与手写 CUDA 实现的性能。
     return torch.transpose_copy(input, dim0=0, dim1=1, out=out)
 
 

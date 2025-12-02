@@ -26,32 +26,51 @@ __global__ void mat_transpose_cute_reg_kernel(const T *pA, T *pB, int M, int N,
                                               ThreadLayoutB tB) {
   int tx = threadIdx.x;
   int bx = blockIdx.x, by = blockIdx.y;
+  // CUTE 风格的基于 tile 的寄存器/共享内存转置实现（寄存器版本）
+  // 说明：此 kernel 使用 cute 库的抽象来把全局矩阵视作 tensor，并对其进行局部 tile 的划分，
+  // 然后把每个 tile 的子区域按照线程布局分配到线程，最后执行按条件的拷贝（copy_if）完成转置。
+  // 关键概念：
+  //  - make_tensor(make_gmem_ptr(pA), make_layout(...))：把全局内存指针绑定为可索引的 tensor，指定矩阵行优先/列优先布局。
+  //  - local_tile(tensor, shape, coord)：取出位于 grid 坐标 (bx,by) 的局部 tile（大小 BLK_M x BLK_N）。
+  //  - local_partition(tile, layout, tx)：根据线程布局把 tile 划分给线程 tx（产生线程负责的子块视图）。
+  //  - make_identity_tensor(mA.shape()) + local_tile：用于生成 tile 的全局下标坐标，便于构造 predicate（边界判定）。
+  //  - copy_if(predicate_tensor, src_partition, dst_partition)：按 predicate 条件把 src 的有效元素拷贝到 dst（用于处理边界越界）。
 
   auto mA = make_tensor(make_gmem_ptr(pA),
-                        make_layout(make_shape(M, N), GenRowMajor{})); // (M, N)
+                        make_layout(make_shape(M, N), GenRowMajor{})); // 全局 A：形状 (M, N)
   auto mB = make_tensor(make_gmem_ptr(pB),
-                        make_layout(make_shape(N, M), GenRowMajor{})); // (N, M)
+                        make_layout(make_shape(N, M), GenRowMajor{})); // 全局 B（目标）：形状 (N, M)
 
+  // gA/gB 表示位于 block (bx,by) 的全局 tile 视图，gA 的形状是 (BLK_M, BLK_N)
+  // 注意 gB 的 coord 是 (by, bx)，即转置时 block 在全局位置互换
   auto gA = local_tile(mA, make_shape(Int<BLK_M>{}, Int<BLK_N>{}),
                        make_coord(bx, by)); // (BM, BN)
   auto gB = local_tile(mB, make_shape(Int<BLK_N>{}, Int<BLK_M>{}),
                        make_coord(by, bx)); // (BN, BM)
+
+  // cA 是用于生成全局坐标的 tile（identity tensor），通过它我们能得到每个元素在全局矩阵中的索引
   auto cA = local_tile(make_identity_tensor(mA.shape()),
                        make_shape(Int<BLK_M>{}, Int<BLK_N>{}),
                        make_coord(bx, by)); // (BM, BN)
 
+  // 把每个 tile 根据线程布局 partition 给线程 tx，得到线程局部负责的子视图
   Tensor tAgA = local_partition(gA, tA, tx);
   Tensor tBgB = local_partition(gB, tB, tx);
   Tensor tAcA = local_partition(cA, tA, tx);
 
+  // 构造 predicate mask（布尔型 tensor），表示对应位置是否在矩阵边界内（用于处理矩阵尺寸不能整除 tile 的情况）
   Tensor tApA = make_tensor<bool>(tAcA.shape(), tAcA.stride());
   CUTE_UNROLL
   for (int i = 0; i < size<0>(tApA); i++) {
     CUTE_UNROLL
     for (int j = 0; j < size<1>(tApA); j++) {
+      // get<0>/get<1> 从 identity tensor 中取到该元素在原矩阵的 (row, col) 全局坐标
       tApA(i, j) = get<0>(tAcA(i, j)) < M && get<1>(tAcA(i, j)) < N;
     }
   }
+
+  // 根据 predicate 把 gA（源 tile）拷贝到 gB（目标 tile），copy_if 会跳过越界位置
+  // 这是一个高层封装，内部会按线程分配做高效的内存访问（可能使用寄存器/共享内存/向量化）
   copy_if(tApA, tAgA, tBgB);
 }
 

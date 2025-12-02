@@ -58,12 +58,14 @@ SKs = [(S, K) for S in Ss for K in Ks]
 for S, K in SKs:
     print("-" * 80)
     print(" " * 40 + f"S={S}, K={K}")
+    print(" " * 40 + "float 32")
     values = torch.randn((S, K)).cuda().float()
     run_benchmark(lib.block_all_reduce_sum_f32_f32, values, "f32f32")
     run_benchmark(lib.block_all_reduce_sum_f32x4_f32, values, "f32x4f32")
     run_benchmark(torch.sum, values, "f32f32_th")
 
     print("-" * 80)
+    print(" " * 40 + "float 16")
     values_half = values.half()
     run_benchmark(lib.block_all_reduce_sum_f16_f16, values_half, "f16f16")
     run_benchmark(lib.block_all_reduce_sum_f16_f32, values_half, "f16f32")
@@ -78,6 +80,7 @@ for S, K in SKs:
     run_benchmark(torch.sum, values_half, "f16f16_th")
 
     print("-" * 80)
+    print(" " * 40 + "bfloat 32")
     values_bf16 = values.bfloat16()
     run_benchmark(lib.block_all_reduce_sum_bf16_bf16, values_bf16, "bf16bf16")
     run_benchmark(lib.block_all_reduce_sum_bf16_f32, values_bf16, "bf16f32")
@@ -94,6 +97,7 @@ for S, K in SKs:
     run_benchmark(torch.sum, values_bf16, "bf16bf16_th")
 
     print("-" * 80)
+    print(" " * 40 + "float 8 e4m3 # torch.sum not support fp8")
     values_f8e4m3 = values.to(dtype=torch.float8_e4m3fn)
     run_benchmark(
         lib.block_all_reduce_sum_fp8_e4m3_f16, values_f8e4m3, "f8e4m3f16"
@@ -108,6 +112,7 @@ for S, K in SKs:
     )  # torch.sum not support fp8
 
     print("-" * 80)
+    print(" " * 40 + "float 8 e5m2 # torch.sum not support fp8")
     values_f8e5m2 = values.to(dtype=torch.float8_e5m2)
     run_benchmark(
         lib.block_all_reduce_sum_fp8_e5m2_f16, values_f8e5m2, "f8e5m2f16"
@@ -122,6 +127,7 @@ for S, K in SKs:
     )  # torch.sum not support fp8
 
     print("-" * 80)
+    print(" " * 40 + "int 8")
     values_i8 = values.to(dtype=torch.int8)
     run_benchmark(lib.block_all_reduce_sum_i8_i32, values_i8, "i8i32")
     run_benchmark(
